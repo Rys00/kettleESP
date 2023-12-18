@@ -3,17 +3,31 @@ import asyncio
 import _thread
 from microWebSrv import MicroWebSrv
 from microWebSocket import MicroWebSocket
+from machine import Pin
 
 
 class Server(object):
-    def __init__(self):
+    def __init__(self, customCommands=None):
         self.clients = []
+        self.PORT = 2137
+        if customCommands is None:
+            customCommands = {}
+        self.customCommands = customCommands
+        self.commandHandles = {
+            "ping": self._handlePingCommand,
+            "setName": self._handleSetName,
+            "verify": self._handleVerifyCommand,
+            "ledOn": self._handleLedOn,
+            "ledOff": self._handleLedOff,
+        }
+        self.commandHandles.update(self.customCommands)
 
     def listen(self):
+        print(f"Starting server at 'localhost' port {self.PORT}")
         asyncio.run(self._mainLoop())
 
     async def _mainLoop(self):
-        mws = MicroWebSrv(port=2137)
+        mws = MicroWebSrv(port=self.PORT)
         mws.MaxWebSocketRecvLen = 256
         mws.WebSocketThreaded = False
         mws.AcceptWebSocketCallback = (
@@ -52,11 +66,11 @@ class Server(object):
         try:
             message = json.loads(rawMessage)
             return message
-        except json.JSONDecodeError:
+        except Exception:
             print(
                 f"Message from '{websocket.host}' couldn't have been parsed to json"
             )
-            self._respond(
+            self.respond(
                 websocket, "Your message couldn't be parsed to json!", 400
             )
         return None
@@ -74,27 +88,37 @@ class Server(object):
         if message is None:
             return
 
-        commandHandles = {
-            "ping": self._handlePingCommand,
-            "setName": self._handleSetName,
-        }
-
         try:
             command = message["command"]
-            if command not in commandHandles:
+            if command not in self.commandHandles:
                 raise ValueError
 
             # executing correct handle for specified command
-            commandHandles[command](message, websocket)
+            self.commandHandles[command](message, websocket)
         except KeyError:
-            self._respond(websocket, "There is no command specified!", 400)
+            self.respond(websocket, "There is no command specified!", 400)
         except ValueError:
-            self._respond(
+            self.respond(
                 websocket, f"There is no command named '{command}'!", 400
             )
 
     def _handlePingCommand(self, _, websocket: MicroWebSocket) -> None:
-        self._respond(websocket, "Ping received! We have a connection!")
+        self.respond(websocket, "Ping received! We have a connection!")
+
+    def _handleVerifyCommand(
+        self, message: dict, websocket: MicroWebSocket
+    ) -> None:
+        try:
+            question = message["question"]
+            if question == "Which team is the best":
+                print(
+                    f"Connection from '{websocket.host}' aka '{websocket.name}' verified!"
+                )
+                self.respond(websocket, "Sprytne Dzbany")
+                return
+            self.respond(websocket, "Wrong question!", 400)
+        except KeyError:
+            self.respond(websocket, "There is no question specified!", 400)
 
     def _handleSetName(self, message: dict, websocket: MicroWebSocket) -> None:
         try:
@@ -103,11 +127,21 @@ class Server(object):
             print(
                 f"Connection from '{websocket.host}' named themselves '{name}'"
             )
-            self._respond(websocket, "Your name was set")
+            self.respond(websocket, "Your name was set")
         except KeyError:
-            self._respond(websocket, "There is no name specified!", 400)
+            self.respond(websocket, "There is no name specified!", 400)
 
-    def _respond(
+    def _handleLedOn(self, _, websocket: MicroWebSocket) -> None:
+        led = Pin(2, Pin.OUT)
+        led.on()
+        self.respond(websocket, "LED has been turned on")
+
+    def _handleLedOff(self, _, websocket: MicroWebSocket) -> None:
+        led = Pin(2, Pin.OUT)
+        led.off()
+        self.respond(websocket, "LED has been turned off")
+
+    def respond(
         self,
         websocket: MicroWebSocket,
         message: str,
