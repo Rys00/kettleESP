@@ -7,14 +7,34 @@ from server import Server
 import _thread
 import os
 from microWebSocket import MicroWebSocket
-from machine import Pin
+from machine import Pin, PWM
+import onewire, ds18x20
 
 
 class Boot(object):
     def __init__(self):
-        self.RELAY_PIN = Pin(13, Pin.OUT)
+        self.RELAY_PIN = Pin(14, Pin.OUT)
         self.LED_PIN = Pin(2, Pin.OUT)
         self.RELAY_PIN.on()
+
+        self.TEMP_SENSOR_PIN = Pin(13, Pin.IN)
+        self.DS = ds18x20.DS18X20(onewire.OneWire(self.TEMP_SENSOR_PIN))
+        self.ROMS = self.DS.scan()
+
+        self.R_PWM = PWM(Pin(12))
+        self.G_PWM = PWM(Pin(5))
+        self.B_PWM = PWM(Pin(27))
+        self.R_PWM.freq(500)
+        self.G_PWM.freq(500)
+        self.B_PWM.freq(500)
+        self.R_PWM.duty(0)
+        self.G_PWM.duty(0)
+        self.B_PWM.duty(0)
+        self._setColor((816, 408, 1023))
+
+        self.targetTemp = 60
+        self.currentTemperature = 0
+        _thread.start_new_thread(self._tempCheckLoop, ())
 
         self.station = network.WLAN(network.STA_IF)
         self.station.active(True)
@@ -26,21 +46,58 @@ class Boot(object):
 
         self.server = Server(
             {
-                "kettleOn": self._kettleOn,
-                "kettleOff": self._kettleOff,
+                "kettleOn": self._onKettleOn,
+                "kettleOff": self._onKettleOff,
+                "getCurrentTemperature": self._onGetCurrentTemperature,
             }
         )
         _thread.start_new_thread(self.server.listen, ())
 
-    def _kettleOn(self, message, websocket: MicroWebSocket):
+    def _onKettleOn(self, message, websocket: MicroWebSocket):
         self.RELAY_PIN.off()
         self.LED_PIN.on()
         self.server.respond(websocket, "Kettle turned on")
 
-    def _kettleOff(self, message, websocket: MicroWebSocket):
+    def _onKettleOff(self, message, websocket: MicroWebSocket):
         self.RELAY_PIN.on()
         self.LED_PIN.off()
         self.server.respond(websocket, "Kettle turned off")
+
+    def _targetTempReached(self):
+        self.RELAY_PIN.on()
+        self.LED_PIN.off()
+
+    def _tempCheckLoop(self):
+        while True:
+            self.currentTemperature = self._readTemp()
+            print(self.currentTemperature)
+            if self.currentTemperature >= self.targetTemp:
+                self._targetTempReached()
+
+    def _readTemp(self):
+        self.DS.convert_temp()
+        # trzeba poczekać 750 ms wg specyfikacji
+        sleep(750)
+        try:
+            temp: float = self.ROMS[0].read_temp()
+            return temp
+        except Exception:
+            return None
+
+    def _onGetCurrentTemperature(self, message, websocket: MicroWebSocket):
+        self.server.respond(
+            websocket,
+            "ok",
+            200,
+            {
+                "temperature": self.currentTemperature(),
+            },
+        )
+
+    def _setColor(self, color: tuple[int]):
+        self.R_PWM.duty(color[0])
+        self.G_PWM.duty(color[1])
+        self.B_PWM.duty(color[2])
 
     def _getWifiConfig(self, path) -> tuple[str, str]:
         print("Extracting wifi config from specified file...")
