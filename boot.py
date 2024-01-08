@@ -32,7 +32,7 @@ class Boot(object):
         self.B_PWM.duty(0)
         self._setColor((816, 408, 1023))
 
-        self.targetTemp = 60
+        self.targetTemp = 28
         self.currentTemperature = 0
         _thread.start_new_thread(self._tempCheckLoop, ())
 
@@ -68,6 +68,7 @@ class Boot(object):
         self.LED_PIN.off()
 
     def _tempCheckLoop(self):
+        print("sfas")
         while True:
             self.currentTemperature = self._readTemp()
             print(self.currentTemperature)
@@ -77,11 +78,12 @@ class Boot(object):
     def _readTemp(self):
         self.DS.convert_temp()
         # trzeba poczekać 750 ms wg specyfikacji
-        sleep(750)
+        sleep(0.75)
         try:
-            temp: float = self.ROMS[0].read_temp()
+            temp: float = self.DS.read_temp(self.ROMS[0])
             return temp
-        except Exception:
+        except Exception as e:
+            raise e
             return None
 
     def _onGetCurrentTemperature(self, message, websocket: MicroWebSocket):
